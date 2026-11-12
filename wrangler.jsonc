@@ -4,7 +4,11 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-11-12",
   "vars": {
-    "ENVIRONMENT": "development"
+    "ENVIRONMENT": "development",
+    // Daily YouTube Data API unit budget. Tools hard-fail once it is reached.
+    "QUOTA_DAILY_LIMIT": "10000",
+    // "true" makes every write tool refuse. Useful while testing.
+    "READ_ONLY": "false"
   },
   "kv_namespaces": [
     {
@@ -14,7 +18,9 @@
   "env": {
     "production": {
       "vars": {
-        "ENVIRONMENT": "production"
+        "ENVIRONMENT": "production",
+        "QUOTA_DAILY_LIMIT": "10000",
+        "READ_ONLY": "false"
       },
       "kv_namespaces": [
         {

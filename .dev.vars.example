@@ -1,0 +1,4 @@
+# Copy to .dev.vars and fill in. Never commit the real file.
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+MCP_SECRET=
