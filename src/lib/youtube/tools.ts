@@ -4,7 +4,9 @@ import {
   dataGet,
   dataWrite,
   defaultRange,
+  inBatches,
   setThumbnail,
+  suggestQueries,
   type YouTubeContext,
 } from "./client";
 import { ToolError } from "./errors";
@@ -294,6 +296,99 @@ export const YOUTUBE_TOOLS: Tool[] = [
         sort: args.sort,
         maxResults: args.maxResults,
       }),
+  },
+
+  // --------------------------------------------------------------- research
+  {
+    name: "youtube_list_categories",
+    title: "List video categories",
+    description:
+      "The video categories available in a region, with the ids that youtube_update_video takes " +
+      "as categoryId. Only categories marked assignable can be set on a video. Costs 1 quota unit.",
+    inputSchema: schema({
+      regionCode: {
+        type: "string",
+        description: "ISO 3166-1 alpha-2, e.g. US or IN. Default US.",
+      },
+    }),
+    handler: async (ctx, args) => {
+      const response = await dataGet(
+        ctx,
+        "videoCategories",
+        { part: "snippet", regionCode: args.regionCode ?? "US" },
+        COST.list,
+      );
+      return {
+        regionCode: args.regionCode ?? "US",
+        categories: (response.items ?? []).map((item: any) => ({
+          id: item.id,
+          title: item.snippet?.title,
+          assignable: item.snippet?.assignable ?? false,
+        })),
+      };
+    },
+  },
+  {
+    name: "youtube_search_suggestions",
+    title: "Search autocomplete",
+    description:
+      "What YouTube's search box suggests for a term: the real phrasings viewers type. Set expand " +
+      "to also query the term followed by each letter a-z, which is how keyword tools build a list. " +
+      "Costs no quota.\n\n" +
+      "Two caveats. This is an unofficial endpoint, since Google publishes no autocomplete API, so " +
+      "it can change without notice. And suggestions are not search volume: YouTube has never " +
+      "published that, and every tool quoting a volume number is estimating it.",
+    inputSchema: schema(
+      {
+        term: { type: "string", description: "The seed term, e.g. 'norse mythology'." },
+        expand: {
+          type: "boolean",
+          description: "Also query term + each letter a-z. Default false.",
+        },
+        language: { type: "string", description: "hl code, e.g. en. Default en." },
+        regionCode: { type: "string", description: "gl code, e.g. US or IN. Default US." },
+      },
+      ["term"],
+    ),
+    handler: async (_ctx, args) => {
+      const term = String(args.term).trim();
+      const language = args.language ?? "en";
+      const region = args.regionCode ?? "US";
+
+      const seeds = [term];
+      if (args.expand) {
+        for (let i = 0; i < 26; i++) {
+          seeds.push(`${term} ${String.fromCharCode(97 + i)}`);
+        }
+      }
+
+      // Batched so an expanded lookup is not 27 simultaneous requests.
+      const batches = await inBatches(seeds, 8, async (seed) => {
+        try {
+          return await suggestQueries(seed, language, region);
+        } catch {
+          // One failed prefix should not lose the whole set.
+          return [] as string[];
+        }
+      });
+
+      const suggestions = [...new Set(batches.flat())].sort();
+      if (suggestions.length === 0) {
+        throw new ToolError(
+          `No suggestions came back for "${term}". Either the term is too obscure, or the ` +
+            `unofficial autocomplete endpoint is unavailable.`,
+        );
+      }
+      return {
+        term,
+        language,
+        regionCode: region,
+        expanded: Boolean(args.expand),
+        count: suggestions.length,
+        suggestions,
+        note: "Suggestions show phrasing, not search volume. YouTube does not publish volume.",
+      };
+    },
   },
 
   // ---------------------------------------------------------------- comments

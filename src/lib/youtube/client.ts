@@ -172,3 +172,53 @@ export function defaultRange(days = 28): { startDate: string; endDate: string } 
   const format = (date: Date) => date.toISOString().slice(0, 10);
   return { startDate: format(start), endDate: format(end) };
 }
+
+const SUGGEST_API = "https://suggestqueries.google.com/complete/search";
+
+/**
+ * YouTube's search autocomplete. This is NOT part of the Data API — Google
+ * publishes no official endpoint for it — so this calls the same unofficial
+ * endpoint every keyword tool scrapes. It costs no quota and needs no auth,
+ * but it carries no guarantee: if Google changes it, this breaks.
+ */
+export async function suggestQueries(
+  term: string,
+  language: string,
+  region: string,
+): Promise<string[]> {
+  const qs = new URLSearchParams({
+    client: "firefox", // returns plain JSON rather than JSONP
+    ds: "yt", // the YouTube suggestion corpus
+    q: term,
+    hl: language,
+    gl: region,
+  });
+
+  const response = await fetch(`${SUGGEST_API}?${qs}`);
+  if (!response.ok) {
+    throw new ToolError(
+      `Autocomplete lookup failed (HTTP ${response.status}). This endpoint is unofficial, ` +
+        `so Google may have changed or rate-limited it.`,
+    );
+  }
+
+  // Shape is ["<term>", ["suggestion", ...], ...]
+  const parsed = (await response.json()) as unknown;
+  if (!Array.isArray(parsed) || !Array.isArray(parsed[1])) {
+    throw new ToolError("Autocomplete returned an unexpected shape; the endpoint may have changed.");
+  }
+  return (parsed[1] as unknown[]).filter((s): s is string => typeof s === "string");
+}
+
+/** Run promises in small batches, so an expanded lookup isn't 27 at once. */
+export async function inBatches<T, R>(
+  items: T[],
+  size: number,
+  run: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = [];
+  for (let i = 0; i < items.length; i += size) {
+    results.push(...(await Promise.all(items.slice(i, i + size).map(run))));
+  }
+  return results;
+}

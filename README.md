@@ -6,10 +6,12 @@ Runs as a single Cloudflare Worker. YouTube is implemented; Instagram is next.
 
 ## What it can do
 
-19 YouTube tools over the Data API v3 and the Analytics API.
+21 YouTube tools over the Data API v3 and the Analytics API.
 
 **Read** — `youtube_get_channel`, `youtube_list_videos` (includes private and unlisted),
-`youtube_get_video`, `youtube_list_comments`
+`youtube_get_video`, `youtube_list_comments`, `youtube_list_categories`
+
+**Research** — `youtube_search_suggestions` (search autocomplete, no quota cost)
 
 **Analytics** — `youtube_analytics_overview`, `_top_videos`, `_retention` (the per-video
 drop-off curve), `_traffic_sources`, `_demographics`, `_geography`, `_daily`,
@@ -136,12 +138,22 @@ src/
     youtube/
       auth.ts           OAuth, token refresh, KV-backed refresh token
       client.ts         Data API + Analytics API
-      tools.ts          the 19 tool definitions
+      tools.ts          the 21 tool definitions
       quota.ts          daily unit budget
       changelog.ts      before-state log and revert
       keys.ts           KV key layout
       errors.ts         ToolError, timing-safe compare
 ```
+
+### On keyword research
+
+`youtube_search_suggestions` reads YouTube's search autocomplete. Google publishes no
+official endpoint for it, so this calls the same unofficial one every keyword tool scrapes:
+free and unauthenticated, but it can change without notice.
+
+It returns phrasing, not demand. YouTube has never published search volume, so every
+"volume" figure in a paid tool is modelled from proxy signals. That estimate cannot be
+rebuilt on the official API, and this server does not pretend to.
 
 ## Known gaps
 
