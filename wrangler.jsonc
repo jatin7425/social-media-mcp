@@ -1,0 +1,33 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "social-media-mcp",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-12",
+  "vars": {
+    "ENVIRONMENT": "development"
+  },
+  "kv_namespaces": [
+    {
+      "binding": "SOCIAL_KV"
+    }
+  ],
+  "env": {
+    "production": {
+      "vars": {
+        "ENVIRONMENT": "production"
+      },
+      "kv_namespaces": [
+        {
+          "binding": "SOCIAL_KV"
+        }
+      ]
+    }
+  },
+  "rules": [
+    {
+      "type": "Text",
+      "globs": ["**/*.html"],
+      "fallthrough": true
+    }
+  ]
+}

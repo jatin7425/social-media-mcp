@@ -1,0 +1,29 @@
+{
+  "name": "social-media-mcp",
+  "version": "1.0.0",
+  "description": "An MCP server that gives Claude, ChatGPT, and Gemini tools to manage and analyze social media accounts.",
+  "homepage": "https://github.com/jatin7425/social-media-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/jatin7425/social-media-mcp/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jatin7425/social-media-mcp.git"
+  },
+  "license": "ISC",
+  "author": "Jatin Viswakarma",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy --env production",
+    "types": "wrangler types --strict-vars=false",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "hono": "^4.13.18"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "wrangler": "^4.160.1"
+  }
+}
