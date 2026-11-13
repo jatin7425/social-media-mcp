@@ -1,7 +1,7 @@
 import { directDownloadUrl } from "../youtube/client";
 import { ToolError } from "../youtube/errors";
 import type { Tool } from "../youtube/tools";
-import { igStatus } from "./auth";
+import { igStatus, igTokenMode } from "./auth";
 import { containerStatus, igGet, igPost, publishContainer, waitForContainer } from "./client";
 
 function schema(properties: Record<string, unknown>, required: string[] = []) {
@@ -45,8 +45,11 @@ export const INSTAGRAM_TOOLS: Tool[] = [
       "professional account, plus when its token expires.",
     inputSchema: schema({}),
     handler: async (ctx) => {
+      // account_type and user_id exist only on the Instagram-login host.
       const me = await igGet(ctx, "me", {
-        fields: "user_id,username,name,account_type,biography,followers_count,follows_count,media_count,profile_picture_url,website",
+        fields: igTokenMode(ctx.env)
+          ? "id,username,name,biography,followers_count,follows_count,media_count,profile_picture_url,website"
+          : "user_id,username,name,account_type,biography,followers_count,follows_count,media_count,profile_picture_url,website",
       });
       return { ...me, token: await igStatus(ctx.env, ctx.userId) };
     },

@@ -6,6 +6,28 @@ import { ToolError } from "../youtube/errors";
  */
 export const IG_API_VERSION = "v26.0";
 export const IG_GRAPH = `https://graph.instagram.com/${IG_API_VERSION}`;
+/** Unified login / system-user tokens go through the Facebook Graph host. */
+export const FB_GRAPH = `https://graph.facebook.com/${IG_API_VERSION}`;
+
+/**
+ * Two ways to connect, because Meta now gives new apps "Unified login" only:
+ *  - token mode: INSTAGRAM_ACCESS_TOKEN (a never-expiring system-user token from
+ *    API setup with Unified login) + INSTAGRAM_USER_ID, served by graph.facebook.com.
+ *  - login mode: the /connect/instagram OAuth flow (Instagram API with Instagram
+ *    Login, graph.instagram.com), for apps that still have it.
+ */
+export function igTokenMode(env: Env): boolean {
+  return Boolean(env.INSTAGRAM_ACCESS_TOKEN && env.INSTAGRAM_USER_ID);
+}
+
+export function igBase(env: Env): string {
+  return igTokenMode(env) ? FB_GRAPH : IG_GRAPH;
+}
+
+/** "me" works in login mode; token mode addresses the account by id. */
+export function igPath(env: Env, path: string): string {
+  return igTokenMode(env) ? path.replace(/^me(?=\/|$)/, env.INSTAGRAM_USER_ID!) : path;
+}
 const AUTH_URL = "https://www.instagram.com/oauth/authorize";
 const SHORT_TOKEN_URL = "https://api.instagram.com/oauth/access_token";
 const LONG_TOKEN_URL = "https://graph.instagram.com/access_token";
@@ -116,6 +138,9 @@ export async function exchangeIgCode(
 }
 
 export async function igStatus(env: Env, userId: string) {
+  if (igTokenMode(env)) {
+    return { connected: true, mode: "system-user token", igUserId: env.INSTAGRAM_USER_ID, expiresAt: "never" };
+  }
   const stored = await env.SOCIAL_KV.get<StoredToken>(igKeys.token(userId), "json");
   return stored
     ? { connected: true, igUserId: stored.igUserId, expiresAt: new Date(stored.expiresAt).toISOString() }
@@ -132,11 +157,13 @@ export async function igDisconnect(env: Env, userId: string): Promise<void> {
  * seven weeks never has to reconnect.
  */
 export async function getIgToken(env: Env, userId: string): Promise<string> {
+  if (igTokenMode(env)) return env.INSTAGRAM_ACCESS_TOKEN!;
   const stored = await env.SOCIAL_KV.get<StoredToken>(igKeys.token(userId), "json");
   if (!stored) {
     throw new ToolError(
-      "No Instagram account is connected. Open /connect/instagram?s=<MCP_SECRET> in a browser " +
-        "and log in with the Instagram professional account.",
+      "No Instagram account is connected. Set the INSTAGRAM_ACCESS_TOKEN and INSTAGRAM_USER_ID " +
+        "secrets (system-user token from the Meta app's API setup with Unified login), or open " +
+        "/connect/instagram?s=<MCP_SECRET> if the app has Instagram login.",
     );
   }
   const now = Date.now();

@@ -1,6 +1,6 @@
 import type { YouTubeContext } from "../youtube/client";
 import { ToolError } from "../youtube/errors";
-import { getIgToken, IG_GRAPH } from "./auth";
+import { getIgToken, igBase, igPath } from "./auth";
 
 /** Same shape as the YouTube context: one env, one connected user. */
 export type IgContext = YouTubeContext;
@@ -42,7 +42,7 @@ export async function igGet(
   params: Record<string, string | number | boolean | undefined> = {},
 ): Promise<any> {
   const token = await getIgToken(ctx.env, ctx.userId);
-  const response = await fetch(`${IG_GRAPH}/${path}?${qs(params)}`, {
+  const response = await fetch(`${igBase(ctx.env)}/${igPath(ctx.env, path)}?${qs(params)}`, {
     headers: { authorization: `Bearer ${token}` },
   });
   return unwrap(response, `GET ${path}`);
@@ -55,7 +55,7 @@ export async function igPost(
 ): Promise<any> {
   const token = await getIgToken(ctx.env, ctx.userId);
   const clean = Object.fromEntries(Object.entries(body).filter(([, v]) => v !== undefined && v !== ""));
-  const response = await fetch(`${IG_GRAPH}/${path}`, {
+  const response = await fetch(`${igBase(ctx.env)}/${igPath(ctx.env, path)}`, {
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
     body: JSON.stringify(clean),

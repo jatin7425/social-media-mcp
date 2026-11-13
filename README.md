@@ -27,8 +27,9 @@ category, privacy, scheduled `publishAt`),
 
 ### Instagram
 
-10 tools over the Instagram API with Instagram Login (`graph.instagram.com`). Needs an
-Instagram **professional** account (Creator or Business); no Facebook Page is required.
+10 tools over the Instagram API, using either a Unified-login system-user token
+(`graph.facebook.com`) or Instagram Login (`graph.instagram.com`). Needs an Instagram
+**professional** account (Creator or Business).
 
 **Read** — `instagram_get_account`, `instagram_list_media`, `instagram_list_comments`,
 `instagram_publishing_limit`
@@ -100,24 +101,29 @@ secret needs setting.
 
 ### 4. Instagram (optional)
 
-1. At <https://developers.facebook.com/apps> create an app and add the **Instagram** product
-   with the *Instagram API with Instagram login* use case.
-2. Under **API setup with Instagram login → Set up Instagram business login**, add the
-   redirect URL `https://<your-worker>.workers.dev/connect/instagram/callback`.
-3. While the app is in Development mode, add your Instagram account under **App roles →
-   Roles → Instagram testers**, then accept the invite in the Instagram app
-   (Settings → Website permissions → Apps and websites → Tester invites).
-4. Copy the **Instagram app ID** and **Instagram app secret** from that same page (not the
-   Facebook app ID) and set them:
+Meta now gives new apps **API setup with Unified login** only. That flow issues a
+never-expiring system-user token, which is all this server needs:
+
+1. At <https://developers.facebook.com/apps> create an app with the **Manage messaging &
+   content on Instagram** use case, and connect a business portfolio when asked (free; no
+   verification needed for your own account).
+2. Use cases → Customize → **API setup with Unified login** → **Create new configuration**.
+   Keep *System-user access token*, select your Instagram professional account as the
+   business asset, and include `instagram_manage_insights` if it is offered so the
+   insights tools work.
+3. Under **Generate access tokens**, add the Instagram account and generate a token. Note
+   the account's id.
+4. Set both as secrets (never commit them):
 
    ```bash
-   npx wrangler secret put INSTAGRAM_APP_ID
-   npx wrangler secret put INSTAGRAM_APP_SECRET
+   npx wrangler secret put INSTAGRAM_ACCESS_TOKEN
+   npx wrangler secret put INSTAGRAM_USER_ID
    ```
 
-5. Open `https://<your-worker>.workers.dev/connect/instagram?s=<MCP_SECRET>` and log in.
-   The 60-day token is stored in KV and refreshes itself whenever a tool runs in its last
-   ten days.
+Apps created before Unified login can instead set `INSTAGRAM_APP_ID` and
+`INSTAGRAM_APP_SECRET`, register `https://<your-worker>.workers.dev/connect/instagram/callback`
+as the business-login redirect, and open `/connect/instagram?s=<MCP_SECRET>`. When both are
+configured, the system-user token wins.
 
 ### 5. Point a client at it
 

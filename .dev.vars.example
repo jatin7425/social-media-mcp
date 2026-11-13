@@ -2,6 +2,9 @@
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 MCP_SECRET=
-# Optional: Instagram API with Instagram Login (Meta app > Instagram > API setup)
+# Instagram, newer apps (Unified login): a system-user token and the account id
+INSTAGRAM_ACCESS_TOKEN=
+INSTAGRAM_USER_ID=
+# Instagram, older apps with Instagram Login: OAuth via /connect/instagram
 INSTAGRAM_APP_ID=
 INSTAGRAM_APP_SECRET=
