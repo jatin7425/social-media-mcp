@@ -7,6 +7,7 @@ import {
   inBatches,
   setThumbnail,
   suggestQueries,
+  uploadVideoFromUrl,
   type YouTubeContext,
 } from "./client";
 import { ToolError } from "./errors";
@@ -47,6 +48,20 @@ async function myChannel(ctx: YouTubeContext, part = "snippet,statistics,content
     );
   }
   return channel;
+}
+
+/** Validate a schedule time and normalise it to the UTC form YouTube stores. */
+function scheduleTime(value: string): string {
+  const at = new Date(value);
+  if (Number.isNaN(at.getTime()) || !/([zZ]|[+-]\d\d:?\d\d)$/.test(value.trim())) {
+    throw new ToolError(
+      `publishAt must be ISO 8601 with a time zone, e.g. 2026-11-13T19:30:00+05:30; got "${value}".`,
+    );
+  }
+  if (at.getTime() < Date.now() + 60_000) {
+    throw new ToolError(`publishAt ${value} is not in the future.`);
+  }
+  return at.toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
 export const YOUTUBE_TOOLS: Tool[] = [
@@ -436,12 +451,103 @@ export const YOUTUBE_TOOLS: Tool[] = [
 
   // ------------------------------------------------------------------ writes
   {
+    name: "youtube_upload_video",
+    title: "Upload a video",
+    description:
+      "Upload a video to the channel from a public URL: the Worker streams the file from there " +
+      "straight into YouTube, so no file passes through the tool call. Google Drive and Dropbox " +
+      "share links are converted to direct downloads (Drive sharing must be 'Anyone with the " +
+      "link'). A vertical video of 3 minutes or less becomes a Short. Uploads private by " +
+      "default; pass publishAt to schedule it, or privacyStatus to publish now. Logged in the " +
+      "change log. Costs 1,600 quota units, so about 6 uploads a day fit the default budget.",
+    write: true,
+    inputSchema: schema(
+      {
+        sourceUrl: {
+          type: "string",
+          description: "Public https URL of the video file (MP4, MOV, WebM...).",
+        },
+        title: { type: "string", maxLength: 100 },
+        description: { type: "string", maxLength: 5000 },
+        tags: { type: "array", items: { type: "string" } },
+        categoryId: {
+          type: "string",
+          description: "From youtube_list_categories. Default 1 (Film & Animation).",
+        },
+        privacyStatus: {
+          type: "string",
+          enum: ["private", "unlisted", "public"],
+          description: "Default private.",
+        },
+        publishAt: {
+          type: "string",
+          description:
+            "Schedule the video to go public at this time, ISO 8601 with an offset, e.g. " +
+            "2026-11-13T19:30:00+05:30. The video stays private until then.",
+        },
+        madeForKids: {
+          type: "boolean",
+          description: "The audience declaration YouTube requires. Default false.",
+        },
+        containsSyntheticMedia: {
+          type: "boolean",
+          description:
+            "YouTube's altered or synthetic content disclosure, for realistic AI-generated people, " +
+            "voices or events. Default false.",
+        },
+        defaultLanguage: { type: "string", description: "e.g. en. Default en." },
+        reason: { type: "string", description: "Stored in the change log." },
+      },
+      ["sourceUrl", "title"],
+    ),
+    handler: async (ctx, args) => {
+      const publishAt = args.publishAt ? scheduleTime(args.publishAt) : undefined;
+      if (publishAt && args.privacyStatus && args.privacyStatus !== "private") {
+        throw new ToolError("publishAt needs the video to stay private until then; leave privacyStatus out or set it to private.");
+      }
+      const language = args.defaultLanguage ?? "en";
+      const snippet: Record<string, unknown> = {
+        title: args.title,
+        description: args.description ?? "",
+        tags: args.tags ?? [],
+        categoryId: args.categoryId ?? "1",
+        defaultLanguage: language,
+        defaultAudioLanguage: language,
+      };
+      const status: Record<string, unknown> = {
+        privacyStatus: publishAt ? "private" : (args.privacyStatus ?? "private"),
+        selfDeclaredMadeForKids: args.madeForKids ?? false,
+        containsSyntheticMedia: args.containsSyntheticMedia ?? false,
+      };
+      if (publishAt) status.publishAt = publishAt;
+
+      const video = await uploadVideoFromUrl(ctx, args.sourceUrl, { snippet, status });
+      const entry = await appendLog(ctx.env, ctx.userId, {
+        tool: "youtube_upload_video",
+        videoId: video.id,
+        before: { note: "New upload. Delete it in YouTube Studio to undo." },
+        after: { title: args.title, privacyStatus: status.privacyStatus, publishAt, sourceUrl: args.sourceUrl, reason: args.reason },
+      });
+      return {
+        ok: true,
+        changeId: entry.id,
+        videoId: video.id,
+        url: `https://youtu.be/${video.id}`,
+        privacyStatus: video.status?.privacyStatus,
+        publishAt: video.status?.publishAt,
+        uploadStatus: video.status?.uploadStatus,
+        note: "YouTube keeps processing the video for a few minutes after upload.",
+      };
+    },
+  },
+  {
     name: "youtube_update_video",
     title: "Update video metadata",
     description:
-      "Change a video's title, description, tags, category or privacy. Only the fields passed are " +
-      "changed; the rest are preserved. Previous values go to the change log first, so " +
-      "youtube_revert_change can put them back. Costs 51 quota units.",
+      "Change a video's title, description, tags, category or privacy, or schedule it to go " +
+      "public with publishAt. Only the fields passed are changed; the rest are preserved. " +
+      "Previous values go to the change log first, so youtube_revert_change can put them back. " +
+      "Costs 51 quota units.",
     write: true,
     inputSchema: schema(
       {
@@ -451,6 +557,13 @@ export const YOUTUBE_TOOLS: Tool[] = [
         tags: { type: "array", items: { type: "string" } },
         categoryId: { type: "string" },
         privacyStatus: { type: "string", enum: ["private", "unlisted", "public"] },
+        publishAt: {
+          type: "string",
+          description:
+            "Schedule the video to go public at this time: ISO 8601 with an offset, e.g. " +
+            "2026-11-13T19:30:00+05:30. Sets privacy to private until then. Pass an empty " +
+            "string to cancel a schedule.",
+        },
         reason: {
           type: "string",
           description: "Why the edit is being made. Stored in the change log.",
@@ -474,6 +587,7 @@ export const YOUTUBE_TOOLS: Tool[] = [
         tags: video.snippet?.tags ?? [],
         categoryId: video.snippet?.categoryId,
         privacyStatus: video.status?.privacyStatus,
+        publishAt: video.status?.publishAt ?? null,
       };
 
       // videos.update replaces the whole snippet, so merge onto what is there.
@@ -486,9 +600,24 @@ export const YOUTUBE_TOOLS: Tool[] = [
       };
       const parts = ["snippet"];
       const body: Record<string, unknown> = { id: args.videoId, snippet };
-      if (args.privacyStatus) {
+      let privacyStatus = args.privacyStatus ?? before.privacyStatus;
+      let publishAt: string | null = before.publishAt;
+      if (args.publishAt !== undefined) {
+        publishAt = args.publishAt === "" ? null : scheduleTime(args.publishAt);
+        // YouTube only honours publishAt on a private video.
+        if (publishAt) {
+          if (args.privacyStatus && args.privacyStatus !== "private") {
+            throw new ToolError("publishAt needs the video to stay private until then; leave privacyStatus out or set it to private.");
+          }
+          privacyStatus = "private";
+        }
+      }
+      if (args.privacyStatus || args.publishAt !== undefined) {
         parts.push("status");
-        body.status = { ...video.status, privacyStatus: args.privacyStatus };
+        const status: Record<string, unknown> = { ...video.status, privacyStatus };
+        if (publishAt) status.publishAt = publishAt;
+        else delete status.publishAt;
+        body.status = status;
       }
 
       const after = {
@@ -496,7 +625,8 @@ export const YOUTUBE_TOOLS: Tool[] = [
         description: snippet.description,
         tags: snippet.tags,
         categoryId: snippet.categoryId,
-        privacyStatus: args.privacyStatus ?? before.privacyStatus,
+        privacyStatus,
+        publishAt,
       };
 
       // Log before the call, so a half-applied change is still recoverable.
@@ -650,7 +780,12 @@ export const YOUTUBE_TOOLS: Tool[] = [
           tags: before.tags,
           categoryId: before.categoryId,
         },
-        status: { ...video.status, privacyStatus: before.privacyStatus },
+        status: (() => {
+          const status: Record<string, unknown> = { ...video.status, privacyStatus: before.privacyStatus };
+          if (before.publishAt) status.publishAt = before.publishAt;
+          else delete status.publishAt;
+          return status;
+        })(),
       };
       await dataWrite(ctx, "PUT", "videos", { part: "snippet,status" }, body, COST.videosUpdate);
       await markReverted(ctx.env, ctx.userId, entry.id);

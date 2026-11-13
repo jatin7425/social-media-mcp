@@ -6,7 +6,7 @@ Runs as a single Cloudflare Worker. YouTube is implemented; Instagram is next.
 
 ## What it can do
 
-21 YouTube tools over the Data API v3 and the Analytics API.
+22 YouTube tools over the Data API v3 and the Analytics API.
 
 **Read** — `youtube_get_channel`, `youtube_list_videos` (includes private and unlisted),
 `youtube_get_video`, `youtube_list_comments`, `youtube_list_categories`
@@ -18,7 +18,9 @@ drop-off curve), `_traffic_sources`, `_demographics`, `_geography`, `_daily`,
 `_content_type` (Shorts vs long-form vs live), and `_query` as an escape hatch for any
 report with no named tool
 
-**Write** — `youtube_update_video` (title, description, tags, category, privacy),
+**Write** — `youtube_upload_video` (from a public URL; Google Drive and Dropbox share links
+work; private, public or scheduled), `youtube_update_video` (title, description, tags,
+category, privacy, scheduled `publishAt`),
 `youtube_set_thumbnail`, `youtube_reply_to_comment`
 
 **Operations** — `youtube_quota_status`, `youtube_change_log`, `youtube_revert_change`
@@ -36,7 +38,7 @@ doing on the first run.
 ### Quota
 
 The Data API gives 10,000 units a day. A read costs 1 unit, a metadata edit 51, a thumbnail
-51. Analytics reports cost nothing against that budget. The server reserves units before
+51, an upload 1,600 (about six a day). Analytics reports cost nothing against that budget. The server reserves units before
 each call and fails with a clear message rather than letting YouTube start answering
 `quotaExceeded`, since that burns the rest of the day on retries.
 

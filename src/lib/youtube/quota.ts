@@ -10,6 +10,7 @@ export const COST = {
   list: 1,
   search: 100,
   videosUpdate: 50,
+  videosInsert: 1600,
   thumbnailsSet: 50,
   commentInsert: 50,
   playlistWrite: 50,
@@ -47,7 +48,7 @@ export async function spendQuota(
   if (used + cost > limit) {
     throw new ToolError(
       `Daily YouTube Data API quota would be exceeded: ${used}/${limit} units used and this ` +
-        `call costs ${cost}. It resets at midnight Pacific. Reads cost 1 unit, metadata edits 50.`,
+        `call costs ${cost}. It resets at midnight Pacific. Reads cost 1 unit, metadata edits 50, an upload 1,600.`,
     );
   }
   await env.SOCIAL_KV.put(ytKeys.quota(userId, today()), String(used + cost), {

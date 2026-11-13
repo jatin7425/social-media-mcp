@@ -1,6 +1,6 @@
 import { getAccessToken } from "./auth";
 import { ToolError } from "./errors";
-import { spendQuota } from "./quota";
+import { COST, spendQuota } from "./quota";
 
 const DATA_API = "https://www.googleapis.com/youtube/v3";
 const UPLOAD_API = "https://www.googleapis.com/upload/youtube/v3";
@@ -115,6 +115,111 @@ export async function setThumbnail(
     },
   );
   return unwrap(response, "thumbnails.set");
+}
+
+/**
+ * Rewrite share links from common hosts into direct-download URLs, so a link
+ * copied from the share menu works without the user knowing the trick.
+ */
+export function directDownloadUrl(url: string): string {
+  const drive = url.match(/drive\.google\.com\/(?:file\/d\/|open\?id=|uc\?(?:.*&)?id=)([\w-]{20,})/);
+  if (drive) {
+    return `https://drive.usercontent.google.com/download?id=${drive[1]}&export=download&confirm=t`;
+  }
+  if (/^https:\/\/(www\.)?dropbox\.com\//.test(url)) {
+    const u = new URL(url);
+    u.searchParams.delete("dl");
+    u.searchParams.set("dl", "1");
+    return u.toString();
+  }
+  return url;
+}
+
+/** Largest file the Worker will relay. Shorts are a few tens of MB. */
+const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024;
+/** Without a Content-Length the file has to be buffered, which Workers memory caps. */
+const MAX_BUFFERED_BYTES = 90 * 1024 * 1024;
+
+export interface UploadMetadata {
+  snippet: Record<string, unknown>;
+  status: Record<string, unknown>;
+}
+
+/**
+ * Upload a video from a public URL with YouTube's resumable protocol. The file
+ * is streamed from the source straight into YouTube, so it never has to pass
+ * through a tool call or sit in Worker memory (when the source sends a length).
+ */
+export async function uploadVideoFromUrl(
+  ctx: YouTubeContext,
+  sourceUrl: string,
+  metadata: UploadMetadata,
+): Promise<any> {
+  const url = directDownloadUrl(sourceUrl);
+  const source = await fetch(url, { redirect: "follow" });
+  if (!source.ok || !source.body) {
+    throw new ToolError(`Could not download the video from ${sourceUrl} (HTTP ${source.status}).`);
+  }
+  const contentType = (source.headers.get("content-type") ?? "").split(";")[0].trim();
+  if (/^text\/html/i.test(contentType)) {
+    throw new ToolError(
+      `${sourceUrl} returned a web page, not a video file. For Google Drive, set sharing to ` +
+        `"Anyone with the link"; for other hosts, use the direct download link.`,
+    );
+  }
+  const videoType = /^video\//i.test(contentType) ? contentType : "video/*";
+
+  let length = Number(source.headers.get("content-length") ?? "");
+  let body: ReadableStream | ArrayBuffer;
+  if (Number.isFinite(length) && length > 0) {
+    if (length > MAX_UPLOAD_BYTES) {
+      throw new ToolError(`That file is ${(length / 1024 ** 3).toFixed(2)}GB; this tool relays at most 2GB.`);
+    }
+    // A fixed-length stream lets the Worker send Content-Length without buffering.
+    const { readable, writable } = new FixedLengthStream(length);
+    source.body.pipeTo(writable).catch(() => {});
+    body = readable;
+  } else {
+    const bytes = await source.arrayBuffer();
+    if (bytes.byteLength > MAX_BUFFERED_BYTES) {
+      throw new ToolError(
+        `The host sent no file size and the file is over 90MB, too large to buffer. Use a host ` +
+          `that sends Content-Length (Google Drive, Dropbox and GitHub releases do).`,
+      );
+    }
+    length = bytes.byteLength;
+    body = bytes;
+  }
+  if (length === 0) throw new ToolError(`The file at ${sourceUrl} is empty.`);
+
+  await spendQuota(ctx.env, ctx.userId, COST.videosInsert);
+  const token = await getAccessToken(ctx.env, ctx.userId);
+
+  // 1. Open a resumable session carrying the metadata.
+  const session = await fetch(
+    `${UPLOAD_API}/videos?uploadType=resumable&part=snippet,status`,
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json; charset=UTF-8",
+        "x-upload-content-length": String(length),
+        "x-upload-content-type": videoType,
+      },
+      body: JSON.stringify(metadata),
+    },
+  );
+  if (!session.ok) await unwrap(session, "videos.insert (start upload)");
+  const location = session.headers.get("location");
+  if (!location) throw new ToolError("YouTube did not return an upload session URL.");
+
+  // 2. Send the bytes in one request.
+  const response = await fetch(location, {
+    method: "PUT",
+    headers: { "content-type": videoType, "content-length": String(length) },
+    body,
+  });
+  return unwrap(response, "videos.insert (upload bytes)");
 }
 
 export interface AnalyticsQuery {
