@@ -9,6 +9,7 @@ import {
   storeRefreshToken,
 } from "../lib/youtube/auth";
 import { safeEqual, ToolError } from "../lib/youtube/errors";
+import { buildIgConsentUrl, exchangeIgCode, igDisconnect, igStatus } from "../lib/instagram/auth";
 
 export const connectRoutes = new Hono<{ Bindings: Env }>();
 
@@ -18,7 +19,7 @@ function page(inner: string): string {
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Connect YouTube - Social Media MCP</title>
+    <title>Connect - Social Media MCP</title>
   </head>
   <body style="font:16px/1.6 system-ui;max-width:46rem;margin:3rem auto;padding:0 1rem">
     ${inner}
@@ -91,5 +92,79 @@ connectRoutes.post("/connect/youtube/disconnect", async (c) => {
     return c.json({ error: "Unauthorized" }, 401);
   }
   await disconnect(c.env, getCurrentUserId());
+  return c.json({ success: true });
+});
+
+// ------------------------------------------------------------------ Instagram
+
+/** Step 1: hand the browser to Instagram's login. */
+connectRoutes.get("/connect/instagram", (c) => {
+  const secret = c.req.query("s") ?? "";
+  if (!c.env.MCP_SECRET || !safeEqual(secret, c.env.MCP_SECRET)) {
+    return c.html(
+      page("<h1>Not authorised</h1><p>Open <code>/connect/instagram?s=YOUR_MCP_SECRET</code>.</p>"),
+      401,
+    );
+  }
+  if (!c.env.INSTAGRAM_APP_ID || !c.env.INSTAGRAM_APP_SECRET) {
+    return c.html(
+      page(
+        "<h1>Instagram is not configured</h1><p>Set the <code>INSTAGRAM_APP_ID</code> and " +
+          "<code>INSTAGRAM_APP_SECRET</code> secrets first (see the README).</p>",
+      ),
+      500,
+    );
+  }
+  const redirectUri = new URL("/connect/instagram/callback", c.req.url).toString();
+  return c.redirect(buildIgConsentUrl(c.env, redirectUri, secret), 302);
+});
+
+/** Step 2: Instagram sends the browser back with ?code=... */
+connectRoutes.get("/connect/instagram/callback", async (c) => {
+  const error = c.req.query("error_description") ?? c.req.query("error");
+  if (error) {
+    return c.html(page(`<h1>Instagram returned an error</h1><p><code>${error}</code></p>`), 400);
+  }
+  const state = c.req.query("state") ?? "";
+  if (!c.env.MCP_SECRET || !safeEqual(state, c.env.MCP_SECRET)) {
+    return c.html(page("<h1>Not authorised</h1><p>State did not match.</p>"), 401);
+  }
+  const code = c.req.query("code");
+  if (!code) return c.html(page("<h1>Missing code</h1>"), 400);
+
+  const redirectUri = new URL("/connect/instagram/callback", c.req.url).toString();
+  try {
+    const result = await exchangeIgCode(c.env, getCurrentUserId(), code, redirectUri);
+    return c.html(
+      page(
+        `<h1>Instagram connected</h1>
+         <p>Account <code>${result.igUserId}</code>. The long-lived token is stored in KV and
+            refreshes itself; it expires ${new Date(result.expiresAt).toUTCString()} if unused.
+            You can close this tab.</p>
+         <p style="color:#555">Permissions granted:</p>
+         <pre style="${PRE}">${result.scopes.split(",").join("\n")}</pre>
+         <p><a href="/connect/instagram/status?s=${state}">Check status</a></p>`,
+      ),
+    );
+  } catch (err) {
+    const message = err instanceof ToolError ? err.message : String(err);
+    return c.html(page(`<h1>Exchange failed</h1><p>${message}</p>`), 400);
+  }
+});
+
+connectRoutes.get("/connect/instagram/status", async (c) => {
+  const secret = c.req.query("s") ?? "";
+  if (!c.env.MCP_SECRET || !safeEqual(secret, c.env.MCP_SECRET)) {
+    return c.json({ error: "Unauthorized" }, 401);
+  }
+  const userId = getCurrentUserId();
+  return c.json({ userId, ...(await igStatus(c.env, userId)) });
+});
+
+connectRoutes.post("/connect/instagram/disconnect", async (c) => {
+  if (!isAuthorised(c.req.raw.headers, c.req.query("s"), c.env.MCP_SECRET)) {
+    return c.json({ error: "Unauthorized" }, 401);
+  }
+  await igDisconnect(c.env, getCurrentUserId());
   return c.json({ success: true });
 });

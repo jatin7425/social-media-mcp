@@ -2,3 +2,6 @@
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 MCP_SECRET=
+# Optional: Instagram API with Instagram Login (Meta app > Instagram > API setup)
+INSTAGRAM_APP_ID=
+INSTAGRAM_APP_SECRET=

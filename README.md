@@ -2,7 +2,7 @@
 
 An MCP server which will give your claude/chatgpt/gemini powers to handle your social media.
 
-Runs as a single Cloudflare Worker. YouTube is implemented; Instagram is next.
+Runs as a single Cloudflare Worker. YouTube and Instagram are implemented.
 
 ## What it can do
 
@@ -24,6 +24,25 @@ category, privacy, scheduled `publishAt`),
 `youtube_set_thumbnail`, `youtube_reply_to_comment`
 
 **Operations** — `youtube_quota_status`, `youtube_change_log`, `youtube_revert_change`
+
+### Instagram
+
+10 tools over the Instagram API with Instagram Login (`graph.instagram.com`). Needs an
+Instagram **professional** account (Creator or Business); no Facebook Page is required.
+
+**Read** — `instagram_get_account`, `instagram_list_media`, `instagram_list_comments`,
+`instagram_publishing_limit`
+
+**Insights** — `instagram_media_insights` (views, reach, likes, shares, saves, Reel watch
+time), `instagram_account_insights` (up to 30 days), `instagram_audience` (age, gender,
+country or city of followers or engaged accounts; needs 100+ of them)
+
+**Write** — `instagram_publish_reel` (from a public video URL; Drive and Dropbox share
+links work), `instagram_publish_container` (finishes a Reel that was still processing),
+`instagram_reply_to_comment`
+
+The API cannot schedule posts: a published Reel goes live immediately. Accounts can publish
+50 posts per rolling 24 hours through the API.
 
 ### Changes are reversible
 
@@ -79,7 +98,28 @@ Then open `https://<your-worker>.workers.dev/connect/youtube?s=<MCP_SECRET>` in 
 and sign in. The refresh token is stored in KV against the current user id, so no further
 secret needs setting.
 
-### 4. Point a client at it
+### 4. Instagram (optional)
+
+1. At <https://developers.facebook.com/apps> create an app and add the **Instagram** product
+   with the *Instagram API with Instagram login* use case.
+2. Under **API setup with Instagram login → Set up Instagram business login**, add the
+   redirect URL `https://<your-worker>.workers.dev/connect/instagram/callback`.
+3. While the app is in Development mode, add your Instagram account under **App roles →
+   Roles → Instagram testers**, then accept the invite in the Instagram app
+   (Settings → Website permissions → Apps and websites → Tester invites).
+4. Copy the **Instagram app ID** and **Instagram app secret** from that same page (not the
+   Facebook app ID) and set them:
+
+   ```bash
+   npx wrangler secret put INSTAGRAM_APP_ID
+   npx wrangler secret put INSTAGRAM_APP_SECRET
+   ```
+
+5. Open `https://<your-worker>.workers.dev/connect/instagram?s=<MCP_SECRET>` and log in.
+   The 60-day token is stored in KV and refreshes itself whenever a tool runs in its last
+   ten days.
+
+### 5. Point a client at it
 
 The MCP endpoint is `POST /mcp` with `Authorization: Bearer <MCP_SECRET>`. For clients that
 only accept a URL, the secret also works as a path segment:

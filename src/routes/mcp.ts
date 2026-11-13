@@ -9,7 +9,14 @@ import {
 import { getCurrentUserId } from "../lib/session";
 import type { YouTubeContext } from "../lib/youtube/client";
 import { ToolError } from "../lib/youtube/errors";
-import { TOOL_BY_NAME, YOUTUBE_TOOLS } from "../lib/youtube/tools";
+import { INSTAGRAM_TOOLS } from "../lib/instagram/tools";
+import { YOUTUBE_TOOLS, type Tool } from "../lib/youtube/tools";
+
+// Deterministic order across both platforms, so clients can cache the catalogue.
+const ALL_TOOLS: Tool[] = [...YOUTUBE_TOOLS, ...INSTAGRAM_TOOLS].sort((a, b) =>
+  a.name.localeCompare(b.name),
+);
+const TOOL_BY_NAME = new Map(ALL_TOOLS.map((tool) => [tool.name, tool]));
 
 export const mcpRoutes = new Hono<{ Bindings: Env }>();
 
@@ -78,7 +85,7 @@ mcpRoutes.on("POST", ["/mcp", "/mcp/:secret"], async (c) => {
 
     case "tools/list":
       return rpcResult(id, {
-        tools: YOUTUBE_TOOLS.map((tool) => ({
+        tools: ALL_TOOLS.map((tool) => ({
           name: tool.name,
           title: tool.title,
           description: tool.description,
@@ -130,8 +137,8 @@ async function callTool(env: Env, id: unknown, params: Json): Promise<Response> 
     const message =
       error instanceof ToolError
         ? error.message
-        : `${tool.name} failed before it could reach YouTube: ${String(error)}. ` +
-          `If that looks like a network error, check the Worker can reach googleapis.com.`;
+        : `${tool.name} failed before it could reach ${tool.name.startsWith("instagram_") ? "Instagram" : "YouTube"}: ${String(error)}. ` +
+          `If that looks like a network error, check the Worker can reach ${tool.name.startsWith("instagram_") ? "graph.instagram.com" : "googleapis.com"}.`;
     return rpcResult(id, { isError: true, content: [{ type: "text", text: message }] });
   }
 }
