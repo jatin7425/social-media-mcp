@@ -6,7 +6,7 @@ Runs as a single Cloudflare Worker. YouTube and Instagram are implemented.
 
 ## What it can do
 
-22 YouTube tools over the Data API v3 and the Analytics API.
+25 YouTube tools over the Data API v3 and the Analytics API.
 
 **Read** — `youtube_get_channel`, `youtube_list_videos` (includes private and unlisted),
 `youtube_get_video`, `youtube_list_comments`, `youtube_list_categories`
@@ -22,6 +22,9 @@ report with no named tool
 work; private, public or scheduled), `youtube_update_video` (title, description, tags,
 category, privacy, scheduled `publishAt`),
 `youtube_set_thumbnail`, `youtube_reply_to_comment`
+
+**Playlists** — `youtube_list_playlists` (or the videos inside one), `youtube_create_playlist`,
+`youtube_add_to_playlist` (several videos at once, in order, skipping ones already there)
 
 **Operations** — `youtube_quota_status`, `youtube_change_log`, `youtube_revert_change`
 

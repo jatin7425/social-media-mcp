@@ -449,6 +449,207 @@ export const YOUTUBE_TOOLS: Tool[] = [
     },
   },
 
+  // --------------------------------------------------------------- playlists
+  {
+    name: "youtube_list_playlists",
+    title: "List playlists",
+    description:
+      "The channel's playlists with id, title, privacy and video count. Pass playlistId to list " +
+      "the videos inside one playlist, in order, instead. Costs 1 quota unit per page.",
+    inputSchema: schema({
+      playlistId: { type: "string", description: "List this playlist's videos instead." },
+      limit: { type: "integer", minimum: 1, maximum: 50, description: "Default 50." },
+      pageToken: { type: "string" },
+    }),
+    handler: async (ctx, args) => {
+      if (args.playlistId) {
+        const page = await dataGet(
+          ctx,
+          "playlistItems",
+          {
+            part: "snippet,contentDetails",
+            playlistId: args.playlistId,
+            maxResults: String(args.limit ?? 50),
+            pageToken: args.pageToken,
+          },
+          COST.list,
+        );
+        return {
+          playlistId: args.playlistId,
+          items: (page.items ?? []).map((item: any) => ({
+            playlistItemId: item.id,
+            position: item.snippet?.position,
+            videoId: item.contentDetails?.videoId,
+            title: item.snippet?.title,
+          })),
+          nextPageToken: page.nextPageToken ?? null,
+        };
+      }
+      const page = await dataGet(
+        ctx,
+        "playlists",
+        {
+          part: "snippet,status,contentDetails",
+          mine: "true",
+          maxResults: String(args.limit ?? 50),
+          pageToken: args.pageToken,
+        },
+        COST.list,
+      );
+      return {
+        playlists: (page.items ?? []).map((playlist: any) => ({
+          playlistId: playlist.id,
+          title: playlist.snippet?.title,
+          description: playlist.snippet?.description,
+          privacyStatus: playlist.status?.privacyStatus,
+          videoCount: playlist.contentDetails?.itemCount ?? 0,
+        })),
+        nextPageToken: page.nextPageToken ?? null,
+      };
+    },
+  },
+  {
+    name: "youtube_create_playlist",
+    title: "Create a playlist",
+    description:
+      "Create a playlist on the channel. Public by default. Check youtube_list_playlists first " +
+      "so a playlist with the same title is not created twice. Logged in the change log. " +
+      "Costs 50 quota units.",
+    write: true,
+    inputSchema: schema(
+      {
+        title: { type: "string", maxLength: 150 },
+        description: { type: "string", maxLength: 5000 },
+        privacyStatus: {
+          type: "string",
+          enum: ["private", "unlisted", "public"],
+          description: "Default public.",
+        },
+        reason: { type: "string", description: "Stored in the change log." },
+      },
+      ["title"],
+    ),
+    handler: async (ctx, args) => {
+      const privacyStatus = args.privacyStatus ?? "public";
+      const result = await dataWrite(
+        ctx,
+        "POST",
+        "playlists",
+        { part: "snippet,status" },
+        {
+          snippet: { title: args.title, description: args.description ?? "" },
+          status: { privacyStatus },
+        },
+        COST.playlistWrite,
+      );
+      const entry = await appendLog(ctx.env, ctx.userId, {
+        tool: "youtube_create_playlist",
+        before: { note: "New playlist. Delete it in YouTube Studio to undo." },
+        after: { playlistId: result.id, title: args.title, privacyStatus, reason: args.reason },
+      });
+      return {
+        ok: true,
+        changeId: entry.id,
+        playlistId: result.id,
+        url: `https://www.youtube.com/playlist?list=${result.id}`,
+      };
+    },
+  },
+  {
+    name: "youtube_add_to_playlist",
+    title: "Add videos to a playlist",
+    description:
+      "Add one or more videos to a playlist, in the order given, appended to the end (or from " +
+      "position onwards). Videos already in the playlist are skipped. Each added video costs " +
+      "50 quota units, plus 1 to read the playlist first. Logged in the change log.",
+    write: true,
+    inputSchema: schema(
+      {
+        playlistId: { type: "string" },
+        videoIds: {
+          type: "array",
+          items: { type: "string" },
+          minItems: 1,
+          maxItems: 50,
+          description: "In the order they should appear.",
+        },
+        position: {
+          type: "integer",
+          minimum: 0,
+          description: "Zero-based slot for the first video. Default: the end.",
+        },
+        reason: { type: "string", description: "Stored in the change log." },
+      },
+      ["playlistId", "videoIds"],
+    ),
+    handler: async (ctx, args) => {
+      // Read what is already there, so a re-run does not add duplicates.
+      const existing = new Set<string>();
+      let pageToken: string | undefined;
+      do {
+        const page = await dataGet(
+          ctx,
+          "playlistItems",
+          { part: "contentDetails", playlistId: args.playlistId, maxResults: "50", pageToken },
+          COST.list,
+        );
+        for (const item of page.items ?? []) {
+          if (item.contentDetails?.videoId) existing.add(item.contentDetails.videoId);
+        }
+        pageToken = page.nextPageToken ?? undefined;
+      } while (pageToken);
+
+      const wanted = [...new Set<string>(args.videoIds)];
+      const toAdd = wanted.filter((id) => !existing.has(id));
+      const skipped = wanted.filter((id) => existing.has(id));
+
+      const added: { videoId: string; playlistItemId: string }[] = [];
+      const failed: { videoId: string; error: string }[] = [];
+      let position: number | undefined = args.position;
+      // One at a time: parallel inserts land in an unpredictable order.
+      for (const videoId of toAdd) {
+        try {
+          const snippet: Record<string, unknown> = {
+            playlistId: args.playlistId,
+            resourceId: { kind: "youtube#video", videoId },
+          };
+          if (position !== undefined) snippet.position = position;
+          const result = await dataWrite(
+            ctx,
+            "POST",
+            "playlistItems",
+            { part: "snippet" },
+            { snippet },
+            COST.playlistWrite,
+          );
+          added.push({ videoId, playlistItemId: result.id });
+          if (position !== undefined) position += 1;
+        } catch (error) {
+          failed.push({ videoId, error: error instanceof Error ? error.message : String(error) });
+          // Out of quota: stop rather than fail every remaining video the same way.
+          if (error instanceof ToolError && /quota/i.test(error.message)) break;
+        }
+      }
+
+      const entry = await appendLog(ctx.env, ctx.userId, {
+        tool: "youtube_add_to_playlist",
+        before: {
+          note: "Remove the added items in YouTube Studio to undo.",
+          playlistId: args.playlistId,
+        },
+        after: { playlistId: args.playlistId, added, reason: args.reason },
+      });
+      return {
+        ok: failed.length === 0,
+        changeId: entry.id,
+        added: added.length,
+        skippedAlreadyInPlaylist: skipped,
+        failed,
+        notAttempted: toAdd.slice(added.length + failed.length),
+      };
+    },
+  },
+
   // ------------------------------------------------------------------ writes
   {
     name: "youtube_upload_video",
