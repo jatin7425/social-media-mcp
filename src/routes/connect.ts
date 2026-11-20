@@ -31,10 +31,16 @@ const PRE = "background:#f4f4f5;padding:1rem;border-radius:8px;white-space:pre-w
 
 /** Step 1: hand the browser to Google's consent screen. */
 connectRoutes.get("/connect/youtube", (c) => {
-  const secret = c.req.query("s") ?? "";
-  if (!c.env.MCP_SECRET || !safeEqual(secret, c.env.MCP_SECRET)) {
+  const secret = (c.req.query("s") ?? "").trim();
+  if (!c.env.MCP_SECRET) {
     return c.html(
-      page("<h1>Not authorised</h1><p>Open <code>/connect/youtube?s=YOUR_MCP_SECRET</code>.</p>"),
+      page("<h1>MCP_SECRET is not set</h1><p>This deployment has no <code>MCP_SECRET</code>. Add it as a Secret in the Cloudflare dashboard.</p>"),
+      500,
+    );
+  }
+  if (!safeEqual(secret, c.env.MCP_SECRET.trim())) {
+    return c.html(
+      page("<h1>Not authorised</h1><p>The secret doesn't match. Open <code>/connect/youtube?s=YOUR_MCP_SECRET</code>.</p>"),
       401,
     );
   }
@@ -51,7 +57,7 @@ connectRoutes.get("/connect/youtube/callback", async (c) => {
 
   // state carries the same secret, so the callback can't be driven by a stranger.
   const state = c.req.query("state") ?? "";
-  if (!c.env.MCP_SECRET || !safeEqual(state, c.env.MCP_SECRET)) {
+  if (!c.env.MCP_SECRET || !safeEqual(state.trim(), c.env.MCP_SECRET.trim())) {
     return c.html(page("<h1>Not authorised</h1><p>State did not match.</p>"), 401);
   }
 
@@ -126,7 +132,7 @@ connectRoutes.get("/connect/instagram/callback", async (c) => {
     return c.html(page(`<h1>Instagram returned an error</h1><p><code>${error}</code></p>`), 400);
   }
   const state = c.req.query("state") ?? "";
-  if (!c.env.MCP_SECRET || !safeEqual(state, c.env.MCP_SECRET)) {
+  if (!c.env.MCP_SECRET || !safeEqual(state.trim(), c.env.MCP_SECRET.trim())) {
     return c.html(page("<h1>Not authorised</h1><p>State did not match.</p>"), 401);
   }
   const code = c.req.query("code");
