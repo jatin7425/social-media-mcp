@@ -3,6 +3,8 @@
   "name": "social-media-mcp",
   "main": "src/index.ts",
   "compatibility_date": "2026-11-12",
+  // Keep variables set in the Cloudflare dashboard when a git push deploys.
+  "keep_vars": true,
   "vars": {
     "ENVIRONMENT": "development",
     // Daily YouTube Data API unit budget. Tools hard-fail once it is reached.
